@@ -190,7 +190,7 @@ bool nanorq_generate_symbols(nanorq *rq, uint8_t sbn, struct ioctx *io) {
 
   precode_matrix_gen(prm, &As, 0);
   // FIXME: WIP convert back to dense
-  sm_densify(&As, om_P(A));
+  sm_densify(&As, om_P(A), A.cols_al);
   sm_destroy(&As);
 
   om_resize(&D, prm->K_padded + prm->S + prm->H,

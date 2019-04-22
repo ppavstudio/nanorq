@@ -464,7 +464,7 @@ bool precode_matrix_decode(struct pparams *prm, octmat *X,
   As = sm_new(prm->L + overhead, prm->L);
   precode_matrix_gen(prm, &As, overhead);
   // FIXME: WIP convert back to dense
-  sm_densify(&As, om_P(A));
+  sm_densify(&As, om_P(A), A.cols_al);
   sm_destroy(&As);
 
   om_resize(&D, prm->S + prm->H + prm->K_padded + overhead, X->cols);
