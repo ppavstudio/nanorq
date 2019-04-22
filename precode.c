@@ -11,40 +11,41 @@
 #include "precode.h"
 #include "rand.h"
 
-static void precode_matrix_init_LDPC1(octmat *A, uint16_t S, uint16_t B) {
+static void precode_matrix_init_LDPC1(sparsemat *A, uint16_t S, uint16_t B) {
   int row, col;
   for (row = 0; row < S; row++) {
     for (col = 0; col < B; col++) {
       uint16_t submtx = col / S;
       if ((row == (col % S)) || (row == (col + submtx + 1) % S) ||
           (row == (col + 2 * (submtx + 1)) % S)) {
-        om_A((*A), row, col) = 1;
+        sm_set(A, row, col, 1);
       }
     }
   }
 }
 
-static void precode_matrix_init_LDPC2(octmat *A, uint16_t skip, uint16_t rows,
-                                      uint16_t cols) {
+static void precode_matrix_init_LDPC2(sparsemat *A, uint16_t skip,
+                                      uint16_t rows, uint16_t cols) {
   for (int row = 0; row < rows; row++) {
     uint16_t start = row % cols;
     for (int col = 0; col < cols; col++) {
       uint8_t val = (col == start || col == (start + 1) % cols) > 0;
-      om_A((*A), row, skip + col) = val;
+      if (val > 0) {
+        sm_set(A, row, skip + col, val);
+      }
     }
   }
 }
 
-static void precode_matrix_add_identity(octmat *A, uint16_t size,
+static void precode_matrix_add_identity(sparsemat *A, uint16_t size,
                                         uint16_t skip_row, uint16_t skip_col) {
   for (int diag = 0; diag < size; diag++) {
-    om_A((*A), skip_row + diag, skip_col + diag) = 1;
+    sm_set(A, skip_row + diag, skip_col + diag, 1);
   }
 }
 
-static octmat precode_matrix_make_MT(uint16_t rows, uint16_t cols) {
-  octmat MT = OM_INITIAL;
-  om_resize(&MT, rows, cols);
+static sparsemat precode_matrix_make_MT(uint16_t rows, uint16_t cols) {
+  sparsemat MT = sm_new(rows, cols);
 
   for (int row = 0; row < MT.rows; row++) {
     int col;
@@ -52,63 +53,59 @@ static octmat precode_matrix_make_MT(uint16_t rows, uint16_t cols) {
       uint32_t tmp = rnd_get(col + 1, 6, MT.rows);
       if ((row == tmp) ||
           (row == (tmp + rnd_get(col + 1, 7, MT.rows - 1) + 1) % MT.rows)) {
-        om_A(MT, row, col) = 1;
-      } else {
-        om_A(MT, row, col) = 0;
+        sm_set(&MT, row, col, 1);
       }
     }
-    om_A(MT, row, col) = OCT_EXP[row];
+    sm_set(&MT, row, col, OCT_EXP[row]);
   }
   return MT;
 }
 
-static octmat precode_matrix_make_GAMMA(uint16_t dim) {
-  octmat GAMMA = OM_INITIAL;
-  om_resize(&GAMMA, dim, dim);
+static sparsemat precode_matrix_make_GAMMA(uint16_t dim) {
+  sparsemat GAMMA = sm_new(dim, dim);
 
   for (int row = 0; row < GAMMA.rows; row++) {
     int col;
-    for (col = 0; col <= row; col++)
-      om_A(GAMMA, row, col) = OCT_EXP[(row - col) % OCT_EXP_SIZE];
-    for (; col < GAMMA.cols; col++) {
-      om_A(GAMMA, row, col) = 0;
+    for (col = 0; col <= row; col++) {
+      sm_set(&GAMMA, row, col, OCT_EXP[(row - col) % OCT_EXP_SIZE]);
     }
   }
   return GAMMA;
 }
 
-static void precode_matrix_init_HDPC(struct pparams *prm, octmat *A) {
+static void precode_matrix_init_HDPC(sparsemat *A, struct pparams *prm) {
   uint16_t m = prm->H;
   uint16_t n = prm->K_padded + prm->S;
 
   if (m == 0 || n == 0)
     return;
 
-  octmat MT = precode_matrix_make_MT(m, n);
-  octmat GAMMA = precode_matrix_make_GAMMA(n);
-  octmat MTxGAMMA = OM_INITIAL;
+  sparsemat MT = precode_matrix_make_MT(m, n);
+  sparsemat GAMMA = precode_matrix_make_GAMMA(n);
+  sparsemat MTxGAMMA = sm_new(MT.rows, GAMMA.cols);
 
-  om_resize(&MTxGAMMA, MT.rows, GAMMA.cols);
-
-  ogemm(om_P(MT), om_P(GAMMA), om_P(MTxGAMMA), MT.rows, MT.cols, GAMMA.cols);
+  sm_gemm(&MT, &GAMMA, &MTxGAMMA);
 
   int row, col;
   for (col = 0; col < GAMMA.cols; col++) {
     for (row = 0; row < MT.rows; row++) {
-      om_A(*A, prm->S + row, col) = om_A(MTxGAMMA, row, col);
+      uint8_t val = sm_get(&MTxGAMMA, row, col);
+      if (val != 0) {
+        sm_set(A, prm->S + row, col, val);
+      }
     }
   }
-  om_destroy(&MT);
-  om_destroy(&GAMMA);
-  om_destroy(&MTxGAMMA);
+  sm_destroy(&MT);
+  sm_destroy(&GAMMA);
+  sm_destroy(&MTxGAMMA);
 }
 
-static void precode_matrix_add_G_ENC(struct pparams *prm, octmat *A) {
+static void precode_matrix_add_G_ENC(sparsemat *A, struct pparams *prm) {
   for (int row = prm->S + prm->H; row < prm->L; row++) {
     uint32_t isi = (row - prm->S) - prm->H;
     uint16_vec idxs = params_get_idxs(prm, isi);
     for (int idx = 0; idx < kv_size(idxs); idx++) {
-      om_A(*A, row, kv_A(idxs, idx)) = 1;
+      sm_set(A, row, kv_A(idxs, idx), 1);
     }
     kv_destroy(idxs);
   }
@@ -338,15 +335,13 @@ static void decode_phase5(octmat *A, octmat *D, uint16_t i) {
   }
 }
 
-void precode_matrix_gen(struct pparams *prm, octmat *A, uint16_t overhead) {
-  om_resize(A, prm->L + overhead, prm->L);
-
+void precode_matrix_gen(struct pparams *prm, sparsemat *A, uint16_t overhead) {
   precode_matrix_init_LDPC1(A, prm->S, prm->B);
   precode_matrix_add_identity(A, prm->S, 0, prm->B);
   precode_matrix_init_LDPC2(A, prm->W, prm->S, prm->P);
-  precode_matrix_init_HDPC(prm, A);
+  precode_matrix_init_HDPC(A, prm);
   precode_matrix_add_identity(A, prm->H, prm->S, prm->L - prm->H);
-  precode_matrix_add_G_ENC(prm, A);
+  precode_matrix_add_G_ENC(A, prm);
 }
 
 octmat precode_matrix_intermediate1(struct pparams *prm, octmat *A, octmat *D) {
@@ -452,6 +447,7 @@ bool precode_matrix_decode(struct pparams *prm, octmat *X,
   octmat A = OM_INITIAL;
   octmat D = OM_INITIAL;
   octmat M = OM_INITIAL;
+  sparsemat As;
 
   num_repair = kv_size(*repair_bin);
   num_gaps = bitmask_gaps(mask, num_symbols);
@@ -464,7 +460,12 @@ bool precode_matrix_decode(struct pparams *prm, octmat *X,
 
   overhead = num_repair - num_gaps;
   rep_idx = 0;
-  precode_matrix_gen(prm, &A, overhead);
+  om_resize(&A, prm->L + overhead, prm->L);
+  As = sm_new(prm->L + overhead, prm->L);
+  precode_matrix_gen(prm, &As, overhead);
+  // FIXME: WIP convert back to dense
+  sm_densify(&As, om_P(A));
+  sm_destroy(&As);
 
   om_resize(&D, prm->S + prm->H + prm->K_padded + overhead, X->cols);
 

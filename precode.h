@@ -4,7 +4,7 @@
 #include "bitmask.h"
 #include "params.h"
 
-void precode_matrix_gen(struct pparams *prm, octmat *A, uint16_t overhead);
+void precode_matrix_gen(struct pparams *prm, sparsemat *A, uint16_t overhead);
 
 octmat precode_matrix_intermediate1(struct pparams *prm, octmat *A, octmat *D);
 bool precode_matrix_intermediate2(octmat *M, octmat *A, octmat *D,

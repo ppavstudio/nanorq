@@ -173,6 +173,7 @@ static struct encoder_core *nanorq_block_encoder(nanorq *rq, uint8_t sbn) {
 
 bool nanorq_generate_symbols(nanorq *rq, uint8_t sbn, struct ioctx *io) {
   octmat A = OM_INITIAL, D = OM_INITIAL;
+  sparsemat As;
 
   struct encoder_core *enc = nanorq_block_encoder(rq, sbn);
   struct pparams *prm = NULL;
@@ -184,7 +185,13 @@ bool nanorq_generate_symbols(nanorq *rq, uint8_t sbn, struct ioctx *io) {
     return true;
 
   prm = &enc->prm;
-  precode_matrix_gen(prm, &A, 0);
+  om_resize(&A, prm->L, prm->L);
+  As = sm_new(prm->L, prm->L);
+
+  precode_matrix_gen(prm, &As, 0);
+  // FIXME: WIP convert back to dense
+  sm_densify(&As, om_P(A));
+  sm_destroy(&As);
 
   om_resize(&D, prm->K_padded + prm->S + prm->H,
             enc->symbol_size * rq->common.Al);
