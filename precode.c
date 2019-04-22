@@ -111,7 +111,7 @@ static void precode_matrix_add_G_ENC(sparsemat *A, struct pparams *prm) {
   }
 }
 
-static void decode_phase0(struct pparams *prm, octmat *A, struct bitmask *mask,
+static void decode_phase0(struct pparams *prm, sparsemat *A, struct bitmask *mask,
                           repair_vec *repair_bin, uint16_t num_symbols,
                           uint16_t overhead) {
 
@@ -123,13 +123,13 @@ static void decode_phase0(struct pparams *prm, octmat *A, struct bitmask *mask,
       continue;
     uint16_t row = gap + prm->H + prm->S;
     for (int col = 0; col < A->cols; col++) {
-      om_A(*A, row, col) = 0;
+      sm_set(A, row, col, 0);
     }
 
     uint16_vec idxs =
         params_get_idxs(prm, kv_A(*repair_bin, rep_idx++).esi + padding);
     for (int idx = 0; idx < kv_size(idxs); idx++) {
-      om_A(*A, row, kv_A(idxs, idx)) = 1;
+      sm_set(A, row, kv_A(idxs, idx), 1);
     }
     kv_destroy(idxs);
     num_gaps--;
@@ -138,12 +138,12 @@ static void decode_phase0(struct pparams *prm, octmat *A, struct bitmask *mask,
   int rep_row = (uint16_t)(A->rows - overhead);
   for (; rep_row < A->rows; rep_row++) {
     for (int col = 0; col < A->cols; col++) {
-      om_A(*A, rep_row, col) = 0;
+      sm_set(A, rep_row, col, 0);
     }
     uint16_vec idxs =
         params_get_idxs(prm, kv_A(*repair_bin, rep_idx++).esi + padding);
     for (int idx = 0; idx < kv_size(idxs); idx++) {
-      om_A(*A, rep_row, kv_A(idxs, idx)) = 1;
+      sm_set(A, rep_row, kv_A(idxs, idx), 1);
     }
     kv_destroy(idxs);
   }
@@ -344,15 +344,20 @@ void precode_matrix_gen(struct pparams *prm, sparsemat *A, uint16_t overhead) {
   precode_matrix_add_G_ENC(A, prm);
 }
 
-octmat precode_matrix_intermediate1(struct pparams *prm, octmat *A, octmat *D) {
+octmat precode_matrix_intermediate1(struct pparams *prm, sparsemat *As, octmat *D) {
   bool success;
   uint16_t i, u;
 
   uint16_vec c;
   kv_init(c);
 
+  octmat Ad = OM_INITIAL, *A = &Ad;
   octmat C = OM_INITIAL;
   octmat X = OM_INITIAL;
+  
+  // FIXME: WIP convert back to dense
+  om_resize(A, As->rows, As->cols);
+  sm_densify(As, om_P(*A), A->cols_al);
 
   if (prm->L == 0 || A == NULL || A->rows == 0 || A->cols == 0) {
     return C;
@@ -393,7 +398,7 @@ octmat precode_matrix_intermediate1(struct pparams *prm, octmat *A, octmat *D) {
   return C;
 }
 
-bool precode_matrix_intermediate2(octmat *M, octmat *A, octmat *D,
+bool precode_matrix_intermediate2(octmat *M, sparsemat *A, octmat *D,
                                   struct pparams *prm, repair_vec *repair_bin,
                                   struct bitmask *mask, uint16_t num_symbols,
                                   uint16_t overhead) {
@@ -444,10 +449,9 @@ bool precode_matrix_decode(struct pparams *prm, octmat *X,
                            repair_vec *repair_bin, struct bitmask *mask) {
   uint16_t num_symbols = X->rows, rep_idx, num_gaps, num_repair, overhead;
 
-  octmat A = OM_INITIAL;
+  sparsemat A;
   octmat D = OM_INITIAL;
   octmat M = OM_INITIAL;
-  sparsemat As;
 
   num_repair = kv_size(*repair_bin);
   num_gaps = bitmask_gaps(mask, num_symbols);
@@ -460,12 +464,8 @@ bool precode_matrix_decode(struct pparams *prm, octmat *X,
 
   overhead = num_repair - num_gaps;
   rep_idx = 0;
-  om_resize(&A, prm->L + overhead, prm->L);
-  As = sm_new(prm->L + overhead, prm->L);
-  precode_matrix_gen(prm, &As, overhead);
-  // FIXME: WIP convert back to dense
-  sm_densify(&As, om_P(A), A.cols_al);
-  sm_destroy(&As);
+  A = sm_new(prm->L + overhead, prm->L);
+  precode_matrix_gen(prm, &A, overhead);
 
   om_resize(&D, prm->S + prm->H + prm->K_padded + overhead, X->cols);
 
@@ -489,7 +489,7 @@ bool precode_matrix_decode(struct pparams *prm, octmat *X,
 
   bool precode_ok = precode_matrix_intermediate2(&M, &A, &D, prm, repair_bin,
                                                  mask, num_symbols, overhead);
-  om_destroy(&A);
+  sm_destroy(&A);
   om_destroy(&D);
 
   if (!precode_ok)
